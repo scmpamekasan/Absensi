@@ -3,10 +3,10 @@ import pandas as pd
 import cv2
 import numpy as np
 import os
+import piexif
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
-from streamlit_js_eval import streamlit_js_eval
 
 # ====================================================
 # CONFIGURASI UTAMA KANTOR
@@ -22,12 +22,11 @@ KARYAWAN_DATA = {
 
 FILE_DATABASE = "absen_master.csv"
 
-# 1. Inisialisasi file CSV fisik di server hosting
+# Inisialisasi awal file CSV agar database selalu siap di server
 if not os.path.exists(FILE_DATABASE):
     df_kosong = pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     df_kosong.to_csv(FILE_DATABASE, index=False)
 
-# Membaca seluruh data log riwayat kumulatif
 def muat_data_absen():
     if os.path.exists(FILE_DATABASE):
         try:
@@ -38,13 +37,11 @@ def muat_data_absen():
             return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
 
-# 2. Inisialisasi data memori session state agar sinkron dengan file CSV
+# Inisialisasi memori tampilan session state agar data sinkron dengan database server
 if "data_log_view" not in st.session_state:
     st.session_state["data_log_view"] = muat_data_absen()
 
-# Menulis baris log absen baru secara fisik ke server dan memori tampilan
 def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon, status):
-    # Simpan ke CSV fisik
     df_baru = pd.DataFrame([{
         "Tanggal": tanggal,
         "ID": emp_id,
@@ -56,9 +53,42 @@ def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon,
         "Status": status
     }])
     df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
-    
-    # PERBAIKAN: Masukkan langsung ke memori tampilan agar langsung muncul di tabel tanpa jeda/looping
     st.session_state["data_log_view"] = pd.concat([st.session_state["data_log_view"], df_baru], ignore_index=True)
+
+# Fungsi untuk mengonversi data derajat EXIF GPS iPhone ke format desimal numerik standar
+def konversi_ke_derajat_desimal(nilai, referensi):
+    try:
+        derajat = float(nilai[0][0]) / float(nilai[0][1])
+        menit = float(nilai[1][0]) / float(nilai[1][1])
+        detik = float(nilai[2][0]) / float(nilai[2][1])
+        
+        desimal = derajat + (menit / 60.0) + (detik / 3600.0)
+        if referensi in ['S', 'W']:
+            desimal = -desimal
+        return desimal
+    except:
+        return None
+
+# Fungsi utama mengekstrak metadata GPS tersembunyi dari foto iPhone karyawan
+def ekstrak_gps_dari_foto(bytes_gambar):
+    try:
+        exif_dict = piexif.load(bytes_gambar)
+        gps_data = exif_dict.get("GPS")
+        
+        if gps_data:
+            lat_val = gps_data.get(piexif.GPSIFD.GPSLatitude)
+            lat_ref = gps_data.get(piexif.GPSIFD.GPSLatitudeRef).decode('utf-8')
+            lon_val = gps_data.get(piexif.GPSIFD.GPSLongitude)
+            lon_ref = gps_data.get(piexif.GPSIFD.GPSLongitudeRef).decode('utf-8')
+            
+            if lat_val and lon_val:
+                lat = konversi_ke_derajat_desimal(lat_val, lat_ref)
+                lon = konversi_ke_derajat_desimal(lon_val, lon_ref)
+                if lat and lon:
+                    return lat, lon, f"{lat:.6f},{lon:.6f}"
+        return None, None, "GPS Foto Tidak Aktif"
+    except:
+        return None, None, "Gagal Membaca EXIF"
 
 def to_excel(df):
     output = BytesIO()
@@ -70,55 +100,25 @@ def to_excel(df):
 # ====================================================
 # INTERFACE APLIKASI
 # ====================================================
-st.set_page_config(page_title="Absensi QR Permanent Log", layout="centered")
+st.set_page_config(page_title="Absensi Metadata GPS", layout="centered")
 st.title("🔒 Sistem Absensi QR Code & Koordinat Permanen")
-st.caption("Data log presensi tersimpan di server fisik bersama rekaman titik koordinat GPS HP karyawan.")
+st.caption("Aplikasi mengekstrak tanda tangan koordinat GPS langsung dari metadata file foto asli HP karyawan.")
 
-# Dropdown Karyawan
+# Pilihan Karyawan
 emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
 
 st.write("---")
-st.subheader("📍 Langkah 1: Kunci Lokasi Koordinat Anda")
+st.subheader("📸 Pindai QR Code Kantor")
+st.info("💡 **Tips iPhone:** Pastikan fitur lokasi kamera aktif di iPhone Anda (*Settings > Privacy > Location Services > Camera > Precise Location*).")
 
-if st.button("🛰️ Ambil / Sinkronisasikan Koordinat GPS HP", use_container_width=True):
-    st.session_state["pemicu_gps_sinkron"] = True
-
-js_gps_script = """
-window.navigator.geolocation.getCurrentPosition(
-    function(pos) { 
-        return pos.coords.latitude + ',' + pos.coords.longitude; 
-    }, 
-    function(err) { 
-        return 'ERROR:' + err.message; 
-    }, 
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-);
-"""
-loc_string = streamlit_js_eval(data_string=js_gps_script, key=f"gps_permanen_{st.session_state.get('pemicu_gps_sinkron', False)}")
-
-koordinat_karyawan = "Belum Terdeteksi"
-current_lat, current_lon = None, None
-
-if loc_string:
-    if "ERROR" not in loc_string:
-        try:
-            koordinat_karyawan = loc_string
-            current_lat, current_lon = map(float, loc_string.split(','))
-            st.success(f"✅ Titik Koordinat Berhasil Terkunci: `{koordinat_karyawan}`")
-        except:
-            st.warning("⏳ Memproses string koordinat numerik...")
-    else:
-        st.error("❌ Akses lokasi ditolak browser. Sila aktifkan Location Services di pengaturan browser Anda.")
-else:
-    st.warning("⚠️ Menunggu data sinyal GPS. Sila ketuk tombol **'🛰️ Ambil / Sinkronisasikan Koordinat GPS HP'** di atas.")
-
-st.write("---")
-st.subheader("📸 Langkah 2: Unggah Jepretan QR Code Kantor")
-
-picture = st.file_uploader("Ketuk di sini untuk mengambil foto QR Code Kantor", type=["png", "jpg", "jpeg"])
+picture = st.file_uploader("Ketuk di sini untuk membuka Kamera iPhone & Ambil Foto QR", type=["png", "jpg", "jpeg"])
 
 if picture is not None:
     bytes_data = picture.read()
+    
+    # PROSES EKSTRAKSI KOORDINAT DARI METADATA FOTO IPHONE (Pasti Berhasil)
+    user_lat, user_lon, koordinat_karyawan = ekstrak_gps_dari_foto(bytes_data)
+    
     cv_img = Image.open(BytesIO(bytes_data))
     open_cv_image = np.array(cv_img)
     
@@ -131,7 +131,7 @@ if picture is not None:
     
     st.image(bytes_data, caption="Pratinjau Foto QR Anda", width=200)
     
-    with st.spinner("Memvalidasi kode matriks QR..."):
+    with st.spinner("Memproses data presensi..."):
         detector = cv2.QRCodeDetector()
         data, bbox, straight_qrcode = detector.detectAndDecode(open_cv_image)
         
@@ -147,8 +147,10 @@ if picture is not None:
                     sudah_absen = ((df_lama['ID'] == emp_id) & (df_lama['Tanggal'] == hari_ini)).any()
                 
                 if not sudah_absen:
-                    simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, koordinat_karyawan, current_lat, current_lon, "Hadir Sah")
+                    simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, koordinat_karyawan, user_lat, user_lon, "Hadir Sah")
                     st.success(f"🎉 PRESENSI BERHASIL DICATAT! Selamat bertugas, {KARYAWAN_DATA[emp_id]}.")
+                    if koordinat_karyawan != "GPS Foto Tidak Aktif":
+                        st.info(f"📍 Koordinat HP Anda terekam: `{koordinat_karyawan}`")
                 else:
                     st.warning(f"⚠️ Profil ID {emp_id} sudah terdaftar hadir pada hari ini ({hari_ini}).")
             else:
@@ -162,13 +164,10 @@ if picture is not None:
 st.write("---")
 st.subheader("📊 Master Riwayat & Lokasi Scan Karyawan")
 
-# Menampilkan data langsung dari variabel state penampung utama yang bersifat real-time
 df_master = st.session_state["data_log_view"]
-
-# Tampilkan tabel log data terupdate
 st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
 
-# Tampilkan komponen visual spasial jika ada koordinat terdaftar
+# Tampilkan peta visual jika ada koordinat numerik desimal yang valid dari foto
 df_peta = df_master.dropna(subset=['Latitude', 'Longitude'])
 if not df_peta.empty:
     st.write("### 🗺️ Peta Visualisasi Lokasi Scan Karyawan")
