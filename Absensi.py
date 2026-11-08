@@ -22,11 +22,12 @@ KARYAWAN_DATA = {
 
 FILE_DATABASE = "absen_master.csv"
 
-# Inisialisasi awal file CSV agar database selalu siap di server
+# 🛠️ FUNGSI 1: Inisialisasi awal file CSV agar database selalu siap di server
 if not os.path.exists(FILE_DATABASE):
     df_kosong = pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     df_kosong.to_csv(FILE_DATABASE, index=False)
 
+# 🛠️ FUNGSI 2: Membaca berkas CSV fisik dari server
 def muat_data_absen():
     if os.path.exists(FILE_DATABASE):
         try:
@@ -37,9 +38,11 @@ def muat_data_absen():
             return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
 
-# 🔥 FIX UTAMA: Muat data dari berkas CSV server langsung ke memori setiap kali halaman di-refresh / dimuat ulang
+# 💡 PERBAIKAN UTAMA: Jalankan fungsi pembacaan data langsung pada bodi utama aplikasi
+# Ini memastikan setiap kali browser di-refresh, Streamlit dipaksa menarik rekap dari file CSV fisik server kembali.
 st.session_state["data_log_view"] = muat_data_absen()
 
+# 🛠️ FUNGSI 3: Menyimpan data baru ke berkas CSV fisik di server
 def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon, status):
     df_baru = pd.DataFrame([{
         "Tanggal": tanggal,
@@ -52,15 +55,15 @@ def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon,
         "Status": status
     }])
     df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
-    # Update memori tampilan secara real-time
+    # Perbarui memori internal visualisasi tabel secara real-time
     st.session_state["data_log_view"] = pd.concat([st.session_state["data_log_view"], df_baru], ignore_index=True)
 
 # Fungsi untuk mengonversi data derajat EXIF GPS iPhone ke format desimal numerik standar
 def konversi_ke_derajat_desimal(nilai, referensi):
     try:
-        derajat = float(nilai[0][0]) / float(nilai[0][1])
-        menit = float(nilai[1][0]) / float(nilai[1][1])
-        detik = float(nilai[2][0]) / float(nilai[2][1])
+        derajat = float(nilai) / float(nilai)
+        menit = float(nilai) / float(nilai)
+        detik = float(nilai) / float(nilai)
         
         desimal = derajat + (menit / 60.0) + (detik / 3600.0)
         if referensi in ['S', 'W']:
@@ -116,13 +119,13 @@ picture = st.file_uploader("Ketuk di sini untuk membuka Kamera iPhone & Ambil Fo
 if picture is not None:
     bytes_data = picture.read()
     
-    # PROSES EKSTRAKSI KOORDINAT DARI METADATA FOTO IPHONE (Pasti Berhasil)
+    # PROSES EKSTRAKSI KOORDINAT DARI METADATA FOTO IPHONE
     user_lat, user_lon, koordinat_karyawan = ekstrak_gps_dari_foto(bytes_data)
     
     cv_img = Image.open(BytesIO(bytes_data))
     open_cv_image = np.array(cv_img)
     
-    if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
+    if len(open_cv_image.shape) == 3 and open_cv_image.shape == 4:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
     elif len(open_cv_image.shape) == 2:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_GRAY2RGB)
@@ -164,6 +167,7 @@ if picture is not None:
 st.write("---")
 st.subheader("📊 Master Riwayat & Lokasi Scan Karyawan")
 
+# Tampilkan data secara utuh yang bersumber langsung dari pembacaan file server
 df_master = st.session_state["data_log_view"]
 st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
 
