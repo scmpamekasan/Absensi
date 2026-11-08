@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import cv2
 import numpy as np
-import pyotp
-import time
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
@@ -11,9 +9,8 @@ from PIL import Image
 # ====================================================
 # CONFIGURASI UTAMA KANTOR
 # ====================================================
-# Menggunakan Secret Key Base32 standar (Simpan rahasia di server)
-SECRET_KEY = "SUPERSECRETBASE32KEYABSENSI2026"
-totp = pyotp.TOTP(SECRET_KEY, interval=30)  # Kode verifikasi berganti setiap 30 detik
+# Teks rahasia yang tertanam di dalam QR Code Statis Kantor Anda
+KODE_QR_SAH = "KANTOR_UTAMA_SECRET_KEY_2026" 
 
 KARYAWAN_DATA = {
     "EMP001": "Eka Sulawestara",
@@ -28,66 +25,47 @@ if "attendance_db" not in st.session_state:
 # ====================================================
 # INTERFACE APLIKASI
 # ====================================================
-st.set_page_config(page_title="Sistem Absensi Stabil", layout="centered")
-st.title("🔒 Sistem Absensi QR Dinamis Kantor")
+st.set_page_config(page_title="Absensi QR Statis", layout="centered")
+st.title("🔒 Sistem Absensi QR Code Kantor")
+st.caption("Silakan pilih nama Anda dan ambil foto QR Code resmi kantor yang telah disediakan.")
 
-# Pilihan Menu untuk Admin Monitor dan Karyawan
-mode = st.sidebar.selectbox("Pilih Mode Aplikasi", ["📱 Menu Absen Karyawan", "📺 Display Monitor Kantor (Token Generator)"])
+# Dropdown Karyawan
+emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
 
-# ====================================================
-# MODE A: MONITOR KANTOR (GENERATOR TOKEN)
-# Dipajang di TV / Tablet Kantor depan Resepsionis
-# ====================================================
-if mode == "📺 Display Monitor Kantor (Token Generator)":
-    st.subheader("📺 Layar Utama Monitor Kehadiran Kantor")
-    st.caption("Token kode di bawah ini otomatis berubah setiap 30 detik. Karyawan harus melakukan scan secara real-time di lokasi.")
+st.write("---")
+st.markdown("### 📸 Pindai QR Code Kantor")
+
+# Menggunakan file uploader untuk memicu kamera native iPhone secara langsung tanpa blokir privasi Apple
+picture = st.file_uploader("Ketuk di sini untuk membuka Kamera iPhone & Foto QR", type=["png", "jpg", "jpeg"])
+
+if picture is not None:
+    # Baca berkas gambar hasil jepretan kamera
+    bytes_data = picture.read()
+    cv_img = Image.open(BytesIO(bytes_data))
+    open_cv_image = np.array(cv_img)
     
-    token_placeholder = st.empty()
-    time_placeholder = st.empty()
-    
-    while True:
-        current_token = totp.now()
-        time_remaining = totp.interval - (time.time() % totp.interval)
+    # Normalisasi konversi warna RGBA ke standar RGB jika terdeteksi dari iPhone
+    if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
+        open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
+    elif len(open_cv_image.shape) == 2:
+        open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_GRAY2RGB)
         
-        with token_placeholder.container():
-            st.markdown(f"""
-            <div style='text-align: center; background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 20px;'>
-                <h1 style='font-size: 60px; color: #1f77b4; letter-spacing: 5px; margin: 0;'>{current_token}</h1>
-                <p style='color: #555; margin-top: 10px;'>Masukkan kode TOKEN 6-digit dinamis ini ke HP Anda atau Scan QR</p>
-            </div>
-            """, unsafe_view_allowed=True)
-            
-        with time_placeholder.container():
-            st.metric(label="Masa Berlaku Kode Kehadiran", value=f"{int(time_remaining)} detik")
-            
-        time.sleep(1)
-        if mode != "📺 Display Monitor Kantor (Token Generator)":
-            break
-
-# ====================================================
-# MODE B: MENU ABSEN KARYAWAN (AKSES VIA HP INDIVIDU)
-# ====================================================
-elif mode == "📱 Menu Absen Karyawan":
-    st.subheader("Silakan Isi Kehadiran Anda")
+    open_cv_image = open_cv_image[:, :, ::-1].copy() # Convert RGB ke BGR OpenCV
     
-    emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
+    # Menampilkan miniatur pratinjau hasil foto di layar web
+    st.image(bytes_data, caption="Pratinjau Foto QR Anda", width=200)
     
-    st.write("---")
-    st.markdown("### Metode Absensi: Masukkan Kode OTP Live Kantor")
-    st.caption("Lihat layar monitor TV kantor saat ini, lalu ketikkan 6 digit angka yang tertera di sana.")
-    
-    # Input Token Dinamis
-    token_input = st.text_input("Masukkan 6 Digit Token Kantor Saat Ini", max_chars=6, placeholder="Contoh: 123456")
-    
-    if st.button("Kirim Kehadiran", use_container_width=True):
-        if token_input:
-            # Melakukan verifikasi token dengan toleransi 1 interval (antisipasi delay pengetikan karyawan)
-            is_valid = totp.verify(token_input, valid_window=1)
-            
-            if is_valid:
+    with st.spinner("Mengekstrak data QR Code..."):
+        # Inisialisasi mesin OpenCV QR Detector
+        detector = cv2.QRCodeDetector()
+        data, bbox, straight_qrcode = detector.detectAndDecode(open_cv_image)
+        
+        if data:
+            # Validasi apakah teks QR Code sama dengan kunci sah kantor
+            if data == KODE_QR_SAH:
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Cek double absen
+                # Cek pencegahan double absen untuk orang yang sama hari ini
                 sudah_absen = any(d['ID'] == emp_id for d in st.session_state.attendance_db)
                 
                 if not sudah_absen:
@@ -95,19 +73,19 @@ elif mode == "📱 Menu Absen Karyawan":
                     st.session_state.attendance_db.append({
                         "ID": emp_id,
                         "Nama": KARYAWAN_DATA[emp_id],
-                        "Waktu": now_str,
-                        "Status": "Hadir Valid"
+                        "Waktu Presensi": now_str,
+                        "Status": "Hadir Sah (QR Verified)"
                     })
                 else:
-                    st.warning("⚠️ Anda sudah tercatat hadir hari ini.")
+                    st.warning("⚠️ Anda sudah terdaftar hadir hari ini.")
             else:
-                st.error("❌ Token Kedaluwarsa atau Salah! Sila lihat kode terbaru yang ada di layar monitor kantor.")
+                st.error("❌ QR Code Salah! Ini bukan QR Code resmi yang diterbitkan oleh kantor.")
         else:
-            st.warning("⚠️ Mohon isi 6 digit token kantor terlebih dahulu.")
+            st.error("📷 QR Code tidak terdeteksi. Pastikan Anda memotret kertas QR secara dekat, fokus, lurus, dan tidak blur.")
 
-    # 📊 Ringkasan Laporan
-    if st.session_state.attendance_db:
-        st.write("---")
-        st.subheader("📊 Log Absen Hari Ini")
-        df = pd.DataFrame(st.session_state.attendance_db)
-        st.dataframe(df, use_container_width=True)
+# 📊 Panel Log Hasil Absensi Hari Ini
+if st.session_state.attendance_db:
+    st.write("---")
+    st.subheader("📊 Laporan Absensi Hari Ini")
+    df = pd.DataFrame(st.session_state.attendance_db)
+    st.dataframe(df, use_container_width=True)
