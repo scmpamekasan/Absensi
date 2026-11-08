@@ -2,20 +2,18 @@ import streamlit as st
 import pandas as pd
 import cv2
 import numpy as np
+import pyotp
+import time
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
-from math import radians, cos, sin, asin, sqrt
-from streamlit_geolocation import streamlit_geolocation
 
 # ====================================================
-# CONFIGURASI KANTOR
+# CONFIGURASI UTAMA KANTOR
 # ====================================================
-KANTOR_LAT = -7.310502   # Latitude Rungkut Surabaya
-KANTOR_LON = 112.798985  # Longitude Rungkut Surabaya
-RADIUS_MAKSIMAL = 100.0  # Jarak radius dalam meter
-
-KODE_QR_SAH = "KANTOR_UTAMA_SECRET_KEY_2026" 
+# Menggunakan Secret Key Base32 standar (Simpan rahasia di server)
+SECRET_KEY = "SUPERSECRETBASE32KEYABSENSI2026"
+totp = pyotp.TOTP(SECRET_KEY, interval=30)  # Kode verifikasi berganti setiap 30 detik
 
 KARYAWAN_DATA = {
     "EMP001": "Eka Sulawestara",
@@ -24,112 +22,92 @@ KARYAWAN_DATA = {
     "EMP004": "Eustacia Redinka Amayra"
 }
 
-def hitung_jarak(lat1, lon1, lat2, lon2):
-    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-    c = 2 * asin(sqrt(a))
-    r = 6371000 
-    return c * r
-
 if "attendance_db" not in st.session_state:
     st.session_state.attendance_db = []
 
 # ====================================================
 # INTERFACE APLIKASI
 # ====================================================
-st.set_page_config(page_title="Sistem Absensi iPhone Fix", layout="centered")
-st.title("🔒 Sistem Absensi QR + GPS Kantor")
+st.set_page_config(page_title="Sistem Absensi Stabil", layout="centered")
+st.title("🔒 Sistem Absensi QR Dinamis Kantor")
 
-# ----------------------------------------------------
-# MODUL 1: AMBIL LOKASI GPS (MENGGUNAKAN TOMBOL RESMI IOS COMPATIBLE)
-# ----------------------------------------------------
-st.subheader("📍 Langkah 1: Klik Tombol di Bawah untuk Kirim GPS")
-st.caption("Khusus iPhone, Anda wajib mengetuk tombol di bawah ini untuk mengaktifkan izin GPS Safari.")
+# Pilihan Menu untuk Admin Monitor dan Karyawan
+mode = st.sidebar.selectbox("Pilih Mode Aplikasi", ["📱 Menu Absen Karyawan", "📺 Display Monitor Kantor (Token Generator)"])
 
-# Komponen tombol khusus geolokasi resmi
-location = streamlit_geolocation()
-
-user_lat, user_lon = None, None
-lokasi_valid = False
-jarak_ke_kantor = None
-
-# Memeriksa apakah pengguna sudah menekan tombol dan koordinat didapatkan
-if location and location['latitude'] is not None:
-    try:
-        user_lat = float(location['latitude'])
-        user_lon = float(location['longitude'])
-        jarak_ke_kantor = hitung_jarak(user_lat, user_lon, KANTOR_LAT, KANTOR_LON)
+# ====================================================
+# MODE A: MONITOR KANTOR (GENERATOR TOKEN)
+# Dipajang di TV / Tablet Kantor depan Resepsionis
+# ====================================================
+if mode == "📺 Display Monitor Kantor (Token Generator)":
+    st.subheader("📺 Layar Utama Monitor Kehadiran Kantor")
+    st.caption("Token kode di bawah ini otomatis berubah setiap 30 detik. Karyawan harus melakukan scan secara real-time di lokasi.")
+    
+    token_placeholder = st.empty()
+    time_placeholder = st.empty()
+    
+    while True:
+        current_token = totp.now()
+        time_remaining = totp.interval - (time.time() % totp.interval)
         
-        st.info(f"🔍 GPS Anda: Lat {user_lat:.6f}, Lon {user_lon:.6f}")
-        st.info(f"📏 Jarak Anda ke Kantor: **{jarak_ke_kantor:.1f} meter**")
-        
-        if jarak_ke_kantor <= RADIUS_MAKSIMAL:
-            st.success("✅ Lokasi Terverifikasi! Anda berada di dalam area kantor.")
-            lokasi_valid = True
-        else:
-            st.error(f"❌ Posisi Anda di luar radius kantor! (Batas maks: {RADIUS_MAKSIMAL}m).")
-            lokasi_valid = False
-    except Exception as e:
-        st.error(f"Gagal memproses koordinat: {e}")
-else:
-    st.warning("⚠️ Sinyal GPS belum masuk. Klik tombol hitam di atas dan pilih 'Allow/Izinkan Lokasi'.")
-
-# ----------------------------------------------------
-# MODUL 2: PEMINDAIAN QR DENGAN TOMBOL NATIVE UPLOADER
-# ----------------------------------------------------
-st.write("---")
-st.subheader("📸 Langkah 2: Pindai QR Code Kantor")
-
-emp_id = st.selectbox("Pilih Profil ID Anda", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
-
-# Tombol kamera sengaja dilepas dari if-lokasi agar Anda bisa tes kameranya dulu
-picture = st.file_uploader("Klik di sini untuk membuka Kamera iPhone Anda", type=["png", "jpg", "jpeg"])
-
-if picture is not None:
-    if lokasi_valid:
-        bytes_data = picture.read()
-        cv_img = Image.open(BytesIO(bytes_data))
-        open_cv_image = np.array(cv_img)
-        
-        if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
-            open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
+        with token_placeholder.container():
+            st.markdown(f"""
+            <div style='text-align: center; background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 20px;'>
+                <h1 style='font-size: 60px; color: #1f77b4; letter-spacing: 5px; margin: 0;'>{current_token}</h1>
+                <p style='color: #555; margin-top: 10px;'>Masukkan kode TOKEN 6-digit dinamis ini ke HP Anda atau Scan QR</p>
+            </div>
+            """, unsafe_view_allowed=True)
             
-        open_cv_image = open_cv_image[:, :, ::-1].copy()
-        
-        # Ekstraksi kode QR
-        detector = cv2.QRCodeDetector()
-        data, bbox, straight_qrcode = detector.detectAndDecode(open_cv_image)
-        
-        if data:
-            if data == KODE_QR_SAH:
+        with time_placeholder.container():
+            st.metric(label="Masa Berlaku Kode Kehadiran", value=f"{int(time_remaining)} detik")
+            
+        time.sleep(1)
+        if mode != "📺 Display Monitor Kantor (Token Generator)":
+            break
+
+# ====================================================
+# MODE B: MENU ABSEN KARYAWAN (AKSES VIA HP INDIVIDU)
+# ====================================================
+elif mode == "📱 Menu Absen Karyawan":
+    st.subheader("Silakan Isi Kehadiran Anda")
+    
+    emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
+    
+    st.write("---")
+    st.markdown("### Metode Absensi: Masukkan Kode OTP Live Kantor")
+    st.caption("Lihat layar monitor TV kantor saat ini, lalu ketikkan 6 digit angka yang tertera di sana.")
+    
+    # Input Token Dinamis
+    token_input = st.text_input("Masukkan 6 Digit Token Kantor Saat Ini", max_chars=6, placeholder="Contoh: 123456")
+    
+    if st.button("Kirim Kehadiran", use_container_width=True):
+        if token_input:
+            # Melakukan verifikasi token dengan toleransi 1 interval (antisipasi delay pengetikan karyawan)
+            is_valid = totp.verify(token_input, valid_window=1)
+            
+            if is_valid:
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Cek double absen
                 sudah_absen = any(d['ID'] == emp_id for d in st.session_state.attendance_db)
                 
                 if not sudah_absen:
-                    st.success(f"🎉 ABSEN BERHASIL! Selamat bekerja, {KARYAWAN_DATA[emp_id]}.")
+                    st.success(f"🎉 ABSENSI BERHASIL! Selamat bekerja, {KARYAWAN_DATA[emp_id]}.")
                     st.session_state.attendance_db.append({
                         "ID": emp_id,
                         "Nama": KARYAWAN_DATA[emp_id],
                         "Waktu": now_str,
-                        "Jarak": f"{jarak_ke_kantor:.1f}m",
-                        "Status": "Hadir Sah"
+                        "Status": "Hadir Valid"
                     })
                 else:
-                    st.warning("⚠️ Anda sudah melakukan absen hari ini.")
+                    st.warning("⚠️ Anda sudah tercatat hadir hari ini.")
             else:
-                st.error("❌ QR Code Palsu! Ini bukan kode resmi dari papan pengumuman kantor.")
+                st.error("❌ Token Kedaluwarsa atau Salah! Sila lihat kode terbaru yang ada di layar monitor kantor.")
         else:
-            st.error("📷 Gambar kurang jelas. Pastikan memotret QR Code secara tegak lurus, fokus, dan dekat.")
-    else:
-        st.error("🔒 Maaf, Absen ditolak! Lokasi GPS Anda belum valid atau di luar radius kantor.")
+            st.warning("⚠️ Mohon isi 6 digit token kantor terlebih dahulu.")
 
-# ----------------------------------------------------
-# MODUL 3: TABEL DATA KEHADIRAN
-# ----------------------------------------------------
-if st.session_state.attendance_db:
-    st.write("---")
-    st.subheader("📊 Log Absen Hari Ini")
-    df = pd.DataFrame(st.session_state.attendance_db)
-    st.dataframe(df, use_container_width=True)
+    # 📊 Ringkasan Laporan
+    if st.session_state.attendance_db:
+        st.write("---")
+        st.subheader("📊 Log Absen Hari Ini")
+        df = pd.DataFrame(st.session_state.attendance_db)
+        st.dataframe(df, use_container_width=True)
