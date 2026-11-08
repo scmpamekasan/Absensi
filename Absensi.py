@@ -20,9 +20,10 @@ KODE_QR_SAH = "KANTOR_UTAMA_SECRET_KEY_2026"
 
 # Data karyawan terdaftar
 KARYAWAN_DATA = {
-    "EMP001": "Budi Santoso",
-    "EMP002": "Siti Aminah",
-    "EMP003": "Joko Widodo"
+    "EMP001": "Eka Sulawestara",
+    "EMP002": "Diny Herlita",
+    "EMP003": "Eureka Annisa Naira",
+    "EMP003": "Eustacia Redinka Amayra"
 }
 
 # Fungsi untuk menghitung jarak antara 2 koordinat GPS (Haversine Formula)
