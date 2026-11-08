@@ -23,7 +23,7 @@ KARYAWAN_DATA = {
     "EMP001": "Eka Sulawestara",
     "EMP002": "Diny Herlita",
     "EMP003": "Eureka Annisa Naira",
-    "EMP003": "Eustacia Redinka Amayra"
+    "EMP004": "Eustacia Redinka Amayra"
 }
 
 # Fungsi untuk menghitung jarak antara 2 koordinat GPS (Haversine Formula)
