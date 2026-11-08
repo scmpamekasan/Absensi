@@ -11,8 +11,8 @@ from streamlit_js_eval import streamlit_js_eval
 # ====================================================
 # CONFIGURASI KANTOR (UBAH SESUAI KANTOR ANDA)
 # ====================================================
-KANTOR_LAT = -6.175392   # Masukkan Latitude kantor Anda
-KANTOR_LON = 106.827153  # Masukkan Longitude kantor Anda
+KANTOR_LAT = -7.310502   # Masukkan Latitude kantor Anda
+KANTOR_LON = 112.798985  # Masukkan Longitude kantor Anda
 RADIUS_MAKSIMAL = 50.0   # Radius toleransi absen dalam satuan METER
 
 # Isi QR Code unik kantor Anda yang harus dicetak/dipajang
