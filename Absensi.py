@@ -118,9 +118,9 @@ def to_excel(df):
 # ====================================================
 # INTERFACE APLIKASI
 # ====================================================
-st.set_page_config(page_title="Absensi QR Proteksi", layout="centered")
+st.set_page_config(page_title="Absensi QR Proteksi + GPS Log", layout="centered")
 st.title("🔒 Sistem Absensi QR Code Kantor")
-st.caption("Sistem dilengkapi modul deteksi otomatis berkas manipulasi galeri non-live.")
+st.caption("Sistem dilengkapi modul deteksi berkas galeri dan rekap permanen titik koordinat foto.")
 
 emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
 
@@ -192,6 +192,7 @@ df_master = muat_data_absen()
 
 st.write("---")
 st.subheader("📊 Master Riwayat & Lokasi Scan Karyawan")
+# Menampilkan data tabel absensi yang telah dilengkapi kolom "Koordinat GPS" hasil rekaman foto
 st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
 
 # Peta Visualisasi Lokasi Karyawan
