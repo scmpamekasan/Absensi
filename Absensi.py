@@ -13,7 +13,7 @@ from streamlit_js_eval import streamlit_js_eval
 # ====================================================
 KANTOR_LAT = -7.310502   # Latitude kantor Anda (Surabaya)
 KANTOR_LON = 112.798985  # Longitude kantor Anda (Surabaya)
-RADIUS_MAKSIMAL = 100.0  # LONGGAR KAN KE 100 METER untuk antisipasi lonjakan akurasi GPS HP
+RADIUS_MAKSIMAL = 1000.0  # LONGGAR KAN KE 100 METER untuk antisipasi lonjakan akurasi GPS HP
 
 # Isi QR Code unik kantor Anda yang harus dicetak/dipajang
 KODE_QR_SAH = "KANTOR_UTAMA_SECRET_KEY_2026" 
