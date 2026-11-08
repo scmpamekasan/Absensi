@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import cv2
 import numpy as np
+import os
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
@@ -9,7 +10,6 @@ from PIL import Image
 # ====================================================
 # CONFIGURASI UTAMA KANTOR
 # ====================================================
-# Teks rahasia yang tertanam di dalam QR Code Statis Kantor Anda
 KODE_QR_SAH = "KANTOR_UTAMA_SECRET_KEY_2026" 
 
 KARYAWAN_DATA = {
@@ -19,23 +19,48 @@ KARYAWAN_DATA = {
     "EMP004": "Eustacia Redinka Amayra"
 }
 
-if "attendance_db" not in st.session_state:
-    st.session_state.attendance_db = []
+# Tentukan nama file database fisik di server
+FILE_DATABASE = "absen_master.csv"
 
-# Fungsi pembantu untuk mengonversi DataFrame menjadi file Excel di memori
+# Fungsi untuk membaca data dari file CSV fisik
+def muat_data_absen():
+    if os.path.exists(FILE_DATABASE):
+        try:
+            return pd.read_csv(FILE_DATABASE)
+        except:
+            return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Status"])
+    else:
+        return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Status"])
+
+# Fungsi untuk menyimpan baris data baru ke file CSV fisik
+def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, status):
+    df_baru = pd.DataFrame([{
+        "Tanggal": tanggal,
+        "ID": emp_id,
+        "Nama": nama,
+        "Waktu Presensi": waktu_str,
+        "Status": status
+    }])
+    
+    if not os.path.exists(FILE_DATABASE):
+        df_baru.to_csv(FILE_DATABASE, index=False)
+    else:
+        df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
+
+# Fungsi pembantu konversi berkas unduhan Excel
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Log Absensi')
+        df.to_excel(writer, index=False, sheet_name='Master Absensi')
     processed_data = output.getvalue()
     return processed_data
 
 # ====================================================
 # INTERFACE APLIKASI
 # ====================================================
-st.set_page_config(page_title="Absensi QR Statis", layout="centered")
+st.set_page_config(page_title="Absensi QR Permanen", layout="centered")
 st.title("🔒 Sistem Absensi QR Code Kantor")
-st.caption("Silakan pilih nama Anda dan ambil foto QR Code resmi kantor yang telah disediakan.")
+st.caption("Data absensi tersimpan permanen di server dan dapat diunduh kapan saja oleh admin.")
 
 # Dropdown Karyawan
 emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
@@ -43,87 +68,83 @@ emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), fo
 st.write("---")
 st.markdown("### 📸 Pindai QR Code Kantor")
 
-# Menggunakan file uploader untuk memicu kamera native iPhone secara langsung tanpa blokir privasi Apple
 picture = st.file_uploader("Ketuk di sini untuk membuka Kamera iPhone & Foto QR", type=["png", "jpg", "jpeg"])
 
 if picture is not None:
-    # Baca berkas gambar hasil jepretan kamera
     bytes_data = picture.read()
     cv_img = Image.open(BytesIO(bytes_data))
     open_cv_image = np.array(cv_img)
     
-    # Normalisasi konversi warna RGBA ke standar RGB jika terdeteksi dari iPhone
     if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
     elif len(open_cv_image.shape) == 2:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_GRAY2RGB)
         
-    open_cv_image = open_cv_image[:, :, ::-1].copy() # Convert RGB ke BGR OpenCV
+    open_cv_image = open_cv_image[:, :, ::-1].copy()
     
-    # Menampilkan miniatur pratinjau hasil foto di layar web
     st.image(bytes_data, caption="Pratinjau Foto QR Anda", width=200)
     
     with st.spinner("Mengekstrak data QR Code..."):
-        # Inisialisasi mesin OpenCV QR Detector
         detector = cv2.QRCodeDetector()
         data, bbox, straight_qrcode = detector.detectAndDecode(open_cv_image)
         
         if data:
-            # Validasi apakah teks QR Code sama dengan kunci sah kantor
             if data == KODE_QR_SAH:
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Ambil objek waktu saat ini secara presisi
+                waktu_sekarang = datetime.now()
+                hari_ini = waktu_sekarang.strftime("%Y-%m-%d")
+                waktu_str = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Cek pencegahan double absen untuk orang yang sama hari ini
-                sudah_absen = any(d['ID'] == emp_id for d in st.session_state.attendance_db)
+                # Muat database fisik untuk pengecekan data
+                df_lama = muat_data_absen()
+                
+                # Validasi proteksi ganda: Hanya tolak jika ID sudah absen di TANGGAL yang sama
+                sudah_absen = False
+                if not df_lama.empty:
+                    sudah_absen = ((df_lama['ID'] == emp_id) & (df_lama['Tanggal'] == hari_ini)).any()
                 
                 if not sudah_absen:
+                    # Simpan langsung ke file CSV fisik di server
+                    simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, "Hadir Sah (QR Verified)")
                     st.success(f"🎉 ABSENSI BERHASIL! Selamat bekerja, {KARYAWAN_DATA[emp_id]}.")
-                    st.session_state.attendance_db.append({
-                        "ID": emp_id,
-                        "Nama": KARYAWAN_DATA[emp_id],
-                        "Waktu Presensi": now_str,
-                        "Status": "Hadir Sah (QR Verified)"
-                    })
                 else:
-                    st.warning("⚠️ Anda sudah terdaftar hadir hari ini.")
+                    st.warning(f"⚠️ {KARYAWAN_DATA[emp_id]} sudah terdaftar hadir pada hari ini ({hari_ini}).")
             else:
-                st.error("❌ QR Code Salah! Ini bukan QR Code resmi yang diterbitkan oleh kantor.")
+                st.error("❌ QR Code Salah! Ini bukan QR Code resmi kantor.")
         else:
-            st.error("📷 QR Code tidak terdeteksi. Pastikan Anda memotret kertas QR secara dekat, fokus, lurus, dan tidak blur.")
+            st.error("📷 QR Code tidak terdeteksi. Dekatkan kamera dan pastikan fokus.")
 
-# 📊 Panel Log Hasil Absensi & Fitur Unduh Data
-if st.session_state.attendance_db:
+# ----------------------------------------------------
+# 📊 PANEL LOG DATA MULTI-HARI & DOWNLOAD BERKAS
+# ----------------------------------------------------
+df_master = muat_data_absen()
+
+if not df_master.empty:
     st.write("---")
-    st.subheader("📊 Laporan Absensi Hari Ini")
+    st.subheader("📊 Master Riwayat Absensi Karyawan")
     
-    # Konversi list data absensi menjadi DataFrame Pandas
-    df = pd.DataFrame(st.session_state.attendance_db)
+    # Menampilkan seluruh riwayat gabungan hari ini dan hari-hari sebelumnya
+    st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
     
-    # Tampilkan tabel absensi langsung di antarmuka web
-    st.dataframe(df, use_container_width=True)
-    
-    # Membuat tombol unduh berkas (Download Buttons)
-    st.write("### 📥 Unduh Log Data Karyawan")
+    st.write("### 📥 Unduh Seluruh Log Data Karyawan")
     col1, col2 = st.columns(2)
     
-    # 1. Tombol Download format Excel (.xlsx)
     with col1:
-        excel_data = to_excel(df)
+        excel_data = to_excel(df_master)
         st.download_button(
-            label="🟢 Unduh format Excel (.xlsx)",
+            label="🟢 Unduh Rekap Excel (.xlsx)",
             data=excel_data,
-            file_name=f"log_absensi_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            file_name=f"rekap_absen_master_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
         
-    # 2. Tombol Download format CSV (.csv)
     with col2:
-        csv_data = df.to_csv(index=False).encode('utf-8')
+        csv_data = df_master.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="🔵 Unduh format CSV (.csv)",
+            label="🔵 Unduh Rekap CSV (.csv)",
             data=csv_data,
-            file_name=f"log_absensi_{datetime.now().strftime('%Y%m%d')}.csv",
+            file_name=f"rekap_absen_master_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
             use_container_width=True
         )
