@@ -1,131 +1,119 @@
 import streamlit as st
-import qrcode
-import time
-import hashlib
-from io import BytesIO
+import pandas as pd
+import cv2
+import numpy as np
 from datetime import datetime
+from io import BytesIO
+from PIL import Image
+from math import radians, cos, sin, asin, sqrt
+from streamlit_js_eval import streamlit_js_eval
 
-# Simulasi database sederhana (Gunakan Database asli seperti SQLite/PostgreSQL untuk production)
-if 'attendance_db' not in st.session_state:
-    st.session_state['attendance_db'] = []
+# ====================================================
+# CONFIGURASI KANTOR (UBAH SESUAI KANTOR ANDA)
+# ====================================================
+KANTOR_LAT = -6.175392   # Masukkan Latitude kantor Anda
+KANTOR_LON = 106.827153  # Masukkan Longitude kantor Anda
+RADIUS_MAKSIMAL = 50.0   # Radius toleransi absen dalam satuan METER
 
-# Konfigurasi Token Rahasia agar tidak bisa ditebak manual
-SECRET_SALT = "SuperSecretSalt123!" 
+# Isi QR Code unik kantor Anda yang harus dicetak/dipajang
+KODE_QR_SAH = "KANTOR_UTAMA_SECRET_KEY_2026" 
 
-def generate_secure_token(interval_seconds=15):
-    """Membuat token unik yang berubah setiap interval detik tertentu"""
-    current_time = time.time()
-    # Membagi waktu saat ini dengan interval (misal 15 detik) untuk menghasilkan angka konstan dalam jendela waktu itu
-    time_window = int(current_time / interval_seconds)
-    
-    # Hash gabungan time window dan salt rahasia
-    raw_token = f"{time_window}_{SECRET_SALT}"
-    secure_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    
-    return secure_hash, time_window
+# Data karyawan terdaftar
+KARYAWAN_DATA = {
+    "EMP001": "Budi Santoso",
+    "EMP002": "Siti Aminah",
+    "EMP003": "Joko Widodo"
+}
 
-# --- NAVIGASI ANTARMUKA ---
-st.sidebar.title("Menu Absensi QR")
-page = st.sidebar.radio("Pilih Tampilan:", ["Monitor QR (Admin)", "Scan Absen (Pengguna/HP)"])
+# Fungsi untuk menghitung jarak antara 2 koordinat GPS (Haversine Formula)
+def hitung_jarak(lat1, lon1, lat2, lon2):
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+    r = 6371000 # Radius bumi dalam meter
+    return c * r
 
-# ==========================================
-# HALAMAN 1: MONITOR QR (DITAMPILKAN DI KANTOR/KELAS)
-# ==========================================
-if page == "Monitor QR (Admin)":
-    st.title("📺 Layar Absensi QR Dinamis")
-    st.write("QR Code di bawah ini akan kedaluwarsa dan berubah secara otomatis dalam **15 detik**.")
+# Inisialisasi database tiruan di memori
+if "attendance_db" not in st.session_state:
+    st.session_state.attendance_db = []
 
-    # Membuat container kosong agar bisa di-refresh terus-menerus
-    placeholder = st.empty()
+# ====================================================
+# INTERFACE APLIKASI
+# ====================================================
+st.set_page_config(page_title="QR & GPS Attendance", layout="centered")
+st.title("📱 Absensi HP Karyawan (QR + GPS)")
+st.caption("Aplikasi ini mendeteksi lokasi Anda untuk memastikan Anda melakukan scan di area kantor.")
 
-    # Loop untuk simulasi refresh otomatis (Streamlit run berkala)
-    while True:
-        token, window_id = generate_secure_token(interval_seconds=15)
+# 1. AMBIL LOKASI GPS KARYAWAN SECARA REAL-TIME
+st.subheader("1. Deteksi Lokasi Anda")
+loc_string = streamlit_js_eval(data_string="window.navigator.geolocation.getCurrentPosition(function(pos) { return pos.coords.latitude + ',' + pos.coords.longitude; });", key="get_location")
+
+user_lat, user_lon = None, None
+if loc_string:
+    try:
+        user_lat, user_lon = map(float, loc_string.split(','))
+        jarak_ke_kantor = hitung_jarak(user_lat, user_lon, KANTOR_LAT, KANTOR_LON)
         
-        # Payload yang dimasukkan ke dalam QR Code
-        qr_data = f"ABSEN_{window_id}_{token}"
-        
-        # Generate gambar QR Code
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(qr_data)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        # Konversi ke format Bytes agar bisa dibaca Streamlit st.image
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        byte_im = buf.getvalue()
-        
-        # Tampilkan di Streamlit
-        with placeholder.container():
-            st.image(byte_im, caption=f"Scan Sekarang! Terakhir diupdate pada: {datetime.now().strftime('%H:%M:%S')}", width=300)
-            st.progress((int(time.time()) % 15) / 15.0, text="Menunggu pergantian kode QR...")
-            
-        time.sleep(1) # Cek & update bar progres setiap 1 detik
-
-# ==========================================
-# HALAMAN 2: SCAN ABSEN (BUKA DI HP MASING-MASING)
-# ==========================================
-elif page == "Scan Absen (Pengguna/HP)":
-    st.title("📱 Pindai QR Kehadiran")
-    
-    nama_user = st.text_input("Masukkan Nama / ID Anda:", placeholder="Contoh: Budi Santoso")
-    
-    st.info("Gunakan kamera bawaan Streamlit di bawah ini untuk memindai QR Code dinamis yang ada di layar monitor.")
-    
-    # Menggunakan kamera bawaan Streamlit
-    img_file = st.camera_input("Arahkan Kamera ke QR Code")
-    
-    if img_file and nama_user:
-        import cv2
-        import numpy as np
-        
-        # Membaca gambar dari kamera
-        file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
-        opencv_img = cv2.imdecode(file_bytes, 1)
-        
-        # Deteksi dan Decode QR Code menggunakan OpenCV
-        detector = cv2.QRCodeDetector()
-        data, bbox, _ = detector.detectAndDecode(opencv_img)
-        
-        if data and data.startswith("ABSEN_"):
-            try:
-                # Memecah data QR: ["ABSEN", "window_id", "token"]
-                _, qr_window_id, qr_token = data.split("_")
-                
-                # Memvalidasi token saat ini dengan token pada QR yang dipindai
-                _, current_window_id = generate_secure_token(interval_seconds=15)
-                
-                # Toleransi 1 jendela waktu ke belakang (jika telat beberapa detik karena loading kamera)
-                is_valid = False
-                for w in [current_window_id, current_window_id - 1]:
-                    check_raw = f"{w}_{SECRET_SALT}"
-                    expected_hash = hashlib.sha256(check_raw.encode()).hexdigest()
-                    if expected_hash == qr_token:
-                        is_valid = True
-                        break
-                
-                if is_valid:
-                    # Cek apakah user sudah absen hari ini/sesi ini (opsional)
-                    log_sukses = f"Hadir: {nama_user} pada pukul {datetime.now().strftime('%H:%M:%S')}"
-                    
-                    if log_sukses not in st.session_state['attendance_db']:
-                        st.session_state['attendance_db'].append(log_sukses)
-                        st.success(f"🎉 Absensi BERHASIL diverifikasi! Selamat datang, {nama_user}.")
-                    else:
-                        st.warning("⚠️ Anda sudah melakukan absensi untuk sesi ini.")
-                else:
-                    st.error("❌ Gagal! QR Code sudah Kedaluwarsa (Expired). Silakan scan ulang kode terbaru di layar monitor.")
-            except Exception as e:
-                st.error("❌ QR Code tidak valid atau format salah.")
+        if jarak_ke_kantor <= RADIUS_MAKSIMAL:
+            st.success(f"📍 Lokasi Terverifikasi! Anda berada di area kantor (Jarak: {jarak_ke_kantor:.1f} meter).")
+            lokasi_valid = True
         else:
-            st.error("🔍 QR Code tidak terdeteksi. Pastikan gambar QR Code jelas dan tidak buram.")
-            
-    # Menampilkan Rekap Absensi Sementara
+            st.error(f"❌ Anda Berada di Luar Area Kantor! (Jarak Anda: {jarak_ke_kantor:.1f} meter dari kantor. Maksimal {RADIUS_MAKSIMAL}m).")
+            lokasi_valid = False
+    except:
+        st.warning("⚠️ Gagal membaca data lokasi. Pastikan GPS HP Anda aktif.")
+        lokasi_valid = False
+else:
+    st.warning("⏳ Menunggu izin lokasi... Mohon klik 'Allow/Izinkan Lokasi' jika muncul pop-up di browser HP Anda.")
+    lokasi_valid = False
+
+# 2. PROSES SCAN QR CODE (HANYA AKTIF JIKA LOKASI VALID)
+st.write("---")
+st.subheader("2. Scan QR Code Kantor")
+
+# Pilihan Karyawan
+emp_id = st.selectbox("Pilih ID Karyawan Anda", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
+
+if lokasi_valid:
+    picture = st.camera_input("Arahkan kamera HP ke QR Code yang dipajang di kantor")
+    
+    if picture:
+        # Konversi gambar dari kamera
+        bytes_data = picture.getvalue()
+        cv_img = Image.open(BytesIO(bytes_data))
+        open_cv_image = np.array(cv_img)
+        open_cv_image = open_cv_image[:, :, ::-1].copy() # Convert RGB ke BGR
+        
+        # Scan QR Code data
+        detector = cv2.QRCodeDetector()
+        data, bbox, straight_qrcode = detector.detectAndDecode(open_cv_image)
+        
+        if data:
+            # Cek apakah QR Code yang di-scan cocok dengan QR Code kantor yang sah
+            if data == KODE_QR_SAH:
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Simpan ke log
+                st.success(f"🎉 ABSEN BERHASIL! Selamat bekerja, {KARYAWAN_DATA[emp_id]}.")
+                st.session_state.attendance_db.append({
+                    "ID": emp_id,
+                    "Nama": KARYAWAN_DATA[emp_id],
+                    "Waktu": now_str,
+                    "Jarak (Meter)": f"{jarak_ke_kantor:.1f}m",
+                    "Status": "Hadir Verified"
+                })
+            else:
+                st.error("❌ QR Code Salah! Ini bukan QR Code resmi kantor.")
+        else:
+            st.error("📷 QR Code tidak terbaca dengan jelas. Coba dekatkan kamera ke QR Code.")
+else:
+    st.info("🔒 Tombol kamera akan terbuka otomatis setelah lokasi GPS Anda terdeteksi berada DI DALAM area kantor.")
+
+# 3. TAMPILKAN HASIL ABSENSI
+if st.session_state.attendance_db:
     st.write("---")
-    st.subheader("📋 Log Kehadiran Hari Ini (Real-time)")
-    if st.session_state['attendance_db']:
-        for log in st.session_state['attendance_db']:
-            st.text(log)
-    else:
-        st.caption("Belum ada data kehadiran saat ini.")
+    st.subheader("📊 Log Absen Hari Ini")
+    df = pd.DataFrame(st.session_state.attendance_db)
+    st.dataframe(df, use_container_width=True)
