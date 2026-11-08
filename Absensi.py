@@ -3,7 +3,6 @@ import pandas as pd
 import cv2
 import numpy as np
 import os
-import piexif
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
@@ -20,79 +19,35 @@ KARYAWAN_DATA = {
     "EMP004": "Eustacia Redinka Amayra"
 }
 
+# Tentukan nama file database fisik di server
 FILE_DATABASE = "absen_master.csv"
 
-# 🛠️ FUNGSI 1: Inisialisasi awal file CSV agar database selalu siap di server
-if not os.path.exists(FILE_DATABASE):
-    df_kosong = pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
-    df_kosong.to_csv(FILE_DATABASE, index=False)
-
-# 🛠️ FUNGSI 2: Membaca berkas CSV fisik dari server
+# Fungsi untuk membaca data dari file CSV fisik
 def muat_data_absen():
     if os.path.exists(FILE_DATABASE):
         try:
-            df = pd.read_csv(FILE_DATABASE)
-            df['Koordinat GPS'] = df['Koordinat GPS'].astype(str)
-            return df
+            return pd.read_csv(FILE_DATABASE)
         except:
-            return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
-    return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
+            return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Status"])
+    else:
+        return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Status"])
 
-# 💡 PERBAIKAN UTAMA: Jalankan fungsi pembacaan data langsung pada bodi utama aplikasi
-# Ini memastikan setiap kali browser di-refresh, Streamlit dipaksa menarik rekap dari file CSV fisik server kembali.
-st.session_state["data_log_view"] = muat_data_absen()
-
-# 🛠️ FUNGSI 3: Menyimpan data baru ke berkas CSV fisik di server
-def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon, status):
+# Fungsi untuk menyimpan baris data baru ke file CSV fisik
+def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, status):
     df_baru = pd.DataFrame([{
         "Tanggal": tanggal,
         "ID": emp_id,
         "Nama": nama,
         "Waktu Presensi": waktu_str,
-        "Koordinat GPS": koordinat_str,
-        "Latitude": lat,
-        "Longitude": lon,
         "Status": status
     }])
-    df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
-    # Perbarui memori internal visualisasi tabel secara real-time
-    st.session_state["data_log_view"] = pd.concat([st.session_state["data_log_view"], df_baru], ignore_index=True)
+    
+    if not os.path.exists(FILE_DATABASE):
+        df_baru.to_csv(FILE_DATABASE, index=False)
+    else:
+        df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
 
-# Fungsi untuk mengonversi data derajat EXIF GPS iPhone ke format desimal numerik standar
-def konversi_ke_derajat_desimal(nilai, referensi):
-    try:
-        derajat = float(nilai) / float(nilai)
-        menit = float(nilai) / float(nilai)
-        detik = float(nilai) / float(nilai)
-        
-        desimal = derajat + (menit / 60.0) + (detik / 3600.0)
-        if referensi in ['S', 'W']:
-            desimal = -desimal
-        return desimal
-    except:
-        return None
-
-# Fungsi utama mengekstrak metadata GPS tersembunyi dari foto iPhone karyawan
-def ekstrak_gps_dari_foto(bytes_gambar):
-    try:
-        exif_dict = piexif.load(bytes_gambar)
-        gps_data = exif_dict.get("GPS")
-        
-        if gps_data:
-            lat_val = gps_data.get(piexif.GPSIFD.GPSLatitude)
-            lat_ref = gps_data.get(piexif.GPSIFD.GPSLatitudeRef).decode('utf-8')
-            lon_val = gps_data.get(piexif.GPSIFD.GPSLongitude)
-            lon_ref = gps_data.get(piexif.GPSIFD.GPSLongitudeRef).decode('utf-8')
-            
-            if lat_val and lon_val:
-                lat = konversi_ke_derajat_desimal(lat_val, lat_ref)
-                lon = konversi_ke_derajat_desimal(lon_val, lon_ref)
-                if lat and lon:
-                    return lat, lon, f"{lat:.6f},{lon:.6f}"
-        return None, None, "GPS Foto Tidak Aktif"
-    except:
-        return None, None, "Gagal Membaca EXIF"
-
+# Fungsi pembantu konversi berkas unduhan Excel
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -103,103 +58,138 @@ def to_excel(df):
 # ====================================================
 # INTERFACE APLIKASI
 # ====================================================
-st.set_page_config(page_title="Absensi Metadata GPS", layout="centered")
-st.title("🔒 Sistem Absensi QR Code & Koordinat Permanen")
-st.caption("Aplikasi mengekstrak tanda tangan koordinat GPS langsung dari metadata file foto asli HP karyawan.")
+st.set_page_config(page_title="Absensi QR Permanen", layout="centered")
+st.set_page_config(page_title="Absensi QR Proteksi", layout="centered")
+st.title("🔒 Sistem Absensi QR Code Kantor")
+st.caption("Data absensi tersimpan permanen di server dan dapat diunduh kapan saja oleh admin.")
+st.caption("Sistem dilengkapi modul deteksi otomatis berkas manipulasi galeri non-live.")
 
-# Pilihan Karyawan
+# Dropdown Karyawan
 emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
 
 st.write("---")
-st.subheader("📸 Pindai QR Code Kantor")
-st.info("💡 **Tips iPhone:** Pastikan fitur lokasi kamera aktif di iPhone Anda (*Settings > Privacy > Location Services > Camera > Precise Location*).")
+st.markdown("### 📸 Pindai QR Code Kantor")
+st.warning("⚠️ WAJIB Pilih Opsi 'Take Photo' (Kamera Langsung). Memilih dari Galeri/Photo Library akan membuat absen Anda DITOLAK.")
 
-picture = st.file_uploader("Ketuk di sini untuk membuka Kamera iPhone & Ambil Foto QR", type=["png", "jpg", "jpeg"])
+picture = st.file_uploader("Ketuk di sini untuk membuka Kamera iPhone & Foto QR", type=["png", "jpg", "jpeg"])
 
 if picture is not None:
     bytes_data = picture.read()
-    
-    # PROSES EKSTRAKSI KOORDINAT DARI METADATA FOTO IPHONE
-    user_lat, user_lon, koordinat_karyawan = ekstrak_gps_dari_foto(bytes_data)
-    
     cv_img = Image.open(BytesIO(bytes_data))
     open_cv_image = np.array(cv_img)
-    
-    if len(open_cv_image.shape) == 3 and open_cv_image.shape == 4:
+    # 🛡️ PROTEKSI VALIDASI JALUR AMBIL FOTO (ANTI-GALERI)
+    nama_berkas = picture.name.lower()
+
+    if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
     elif len(open_cv_image.shape) == 2:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_GRAY2RGB)
-        
+    # Deteksi kecocokan nama file default jepretan live kamera seluler iOS/Android
+    is_live_camera = "image" in nama_berkas or "photo" in nama_berkas or nama_berkas.startswith("captured")
+
+    if not is_live_camera:
+        st.error(f"❌ ABSENSI DITOLAK! Terdeteksi kecurangan. Anda mengunggah file dari Galeri/Photo Library ({picture.name}). Anda wajib menggunakan menu 'Take Photo' untuk mengambil foto secara langsung di tempat.")
+    else:
+        bytes_data = picture.read()
+        cv_img = Image.open(BytesIO(bytes_data))
+        open_cv_image = np.array(cv_img)
+
     open_cv_image = open_cv_image[:, :, ::-1].copy()
     
     st.image(bytes_data, caption="Pratinjau Foto QR Anda", width=200)
     
-    with st.spinner("Memproses data presensi..."):
+    with st.spinner("Mengekstrak data QR Code..."):
         detector = cv2.QRCodeDetector()
         data, bbox, straight_qrcode = detector.detectAndDecode(open_cv_image)
-        
+        if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
+            open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
+        elif len(open_cv_image.shape) == 2:
+            open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_GRAY2RGB)
+            
+        open_cv_image = open_cv_image[:, :, ::-1].copy()
+
         if data:
             if data == KODE_QR_SAH:
+                # Ambil objek waktu saat ini secara presisi
                 waktu_sekarang = datetime.now()
                 hari_ini = waktu_sekarang.strftime("%Y-%m-%d")
                 waktu_str = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
                 
-                df_lama = st.session_state["data_log_view"]
+                # Muat database fisik untuk pengecekan data
+                df_lama = muat_data_absen()
+                
+                # Validasi proteksi ganda: Hanya tolak jika ID sudah absen di TANGGAL yang sama
                 sudah_absen = False
                 if not df_lama.empty:
                     sudah_absen = ((df_lama['ID'] == emp_id) & (df_lama['Tanggal'] == hari_ini)).any()
                 
                 if not sudah_absen:
-                    simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, koordinat_karyawan, user_lat, user_lon, "Hadir Sah")
-                    st.success(f"🎉 PRESENSI BERHASIL DICATAT! Selamat bertugas, {KARYAWAN_DATA[emp_id]}.")
-                    if koordinat_karyawan != "GPS Foto Tidak Aktif":
-                        st.info(f"📍 Koordinat HP Anda terekam: `{koordinat_karyawan}`")
+                    # Simpan langsung ke file CSV fisik di server
+                    simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, "Hadir Sah (QR Verified)")
+                    st.success(f"🎉 ABSENSI BERHASIL! Selamat bekerja, {KARYAWAN_DATA[emp_id]}.")
+        st.image(bytes_data, caption="Pratinjau Foto QR Anda", width=200)
+        
+        with st.spinner("Mengekstrak data QR Code..."):
+            detector = cv2.QRCodeDetector()
+            data, bbox, straight_qrcode = detector.detectAndDecode(open_cv_image)
+            
+            if data:
+                if data == KODE_QR_SAH:
+                    waktu_sekarang = datetime.now()
+                    hari_ini = waktu_sekarang.strftime("%Y-%m-%d")
+                    waktu_str = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    df_lama = muat_data_absen()
+                    sudah_absen = False
+                    if not df_lama.empty:
+                        sudah_absen = ((df_lama['ID'] == emp_id) & (df_lama['Tanggal'] == hari_ini)).any()
+                    
+                    if not sudah_absen:
+                        simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, "Hadir Sah (Kamera Live)")
+                        st.success(f"🎉 ABSENSI BERHASIL! Selamat bekerja, {KARYAWAN_DATA[emp_id]}.")
+                    else:
+                        st.warning(f"⚠️ {KARYAWAN_DATA[emp_id]} sudah terdaftar hadir pada hari ini ({hari_ini}).")
                 else:
-                    st.warning(f"⚠️ Profil ID {emp_id} sudah terdaftar hadir pada hari ini ({hari_ini}).")
+                    st.warning(f"⚠️ {KARYAWAN_DATA[emp_id]} sudah terdaftar hadir pada hari ini ({hari_ini}).")
+                    st.error("❌ QR Code Salah! Ini bukan QR Code resmi kantor.")
             else:
-                st.error("❌ Autentikasi Gagal! Kode QR yang Anda potret salah atau tidak sah.")
+                st.error("❌ QR Code Salah! Ini bukan QR Code resmi kantor.")
         else:
-            st.error("📷 Pembacaan kode gagal. Pastikan foto berjarak dekat, sejajar lurus, dan tidak buram.")
+            st.error("📷 QR Code tidak terdeteksi. Dekatkan kamera dan pastikan fokus.")
+                st.error("📷 QR Code tidak terdeteksi. Dekatkan kamera dan pastikan fokus.")
 
-# ====================================================
-# 📊 PRESENTASI TABEL DATA LOG ABSENSI LIVE MURNI
-# ====================================================
-st.write("---")
-st.subheader("📊 Master Riwayat & Lokasi Scan Karyawan")
+# ----------------------------------------------------
+# 📊 PANEL LOG DATA MULTI-HARI & DOWNLOAD BERKAS
+# 📊 PANEL LOG RIWAYAT
+# ----------------------------------------------------
+df_master = muat_data_absen()
 
-# Tampilkan data secara utuh yang bersumber langsung dari pembacaan file server
-df_master = st.session_state["data_log_view"]
-st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
-
-# Tampilkan peta visual jika ada koordinat numerik desimal yang valid dari foto
-df_peta = df_master.dropna(subset=['Latitude', 'Longitude'])
-if not df_peta.empty:
-    st.write("### 🗺️ Peta Visualisasi Lokasi Scan Karyawan")
-    df_map_engine = df_peta[['Latitude', 'Longitude']].rename(columns={'Latitude': 'lat', 'Longitude': 'lon'})
-    st.map(df_map_engine, zoom=11)
-
-# MODUL UNDUH MASTER BERKAS
-st.write("### 📥 Unduh Master Berkas Log Absensi")
-col1, col2 = st.columns(2)
-
-with col1:
-    excel_data = to_excel(df_master) if not df_master.empty else b""
-    st.download_button(
-        label="🟢 Unduh Dokumen Excel (.xlsx)",
-        data=excel_data,
-        file_name=f"master_absen_koordinat_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        disabled=df_master.empty,
-        use_container_width=True
-    )
+if not df_master.empty:
+    st.write("---")
+    st.subheader("📊 Master Riwayat Absensi Karyawan")
     
-with col2:
-    csv_data = df_master.to_csv(index=False).encode('utf-8') if not df_master.empty else b""
-    st.download_button(
-        label="🔵 Unduh Dokumen CSV (.csv)",
-        data=csv_data,
-        file_name=f"master_absen_koordinat_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
-        disabled=df_master.empty,
-        use_container_width=True
-    )
+    # Menampilkan seluruh riwayat gabungan hari ini dan hari-hari sebelumnya
+    st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
+
+    st.write("### 📥 Unduh Seluruh Log Data Karyawan")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        excel_data = to_excel(df_master)
+        st.download_button(
+            label="🟢 Unduh Rekap Excel (.xlsx)",
+            data=excel_data,
+            file_name=f"rekap_absen_master_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+        
+    with col2:
+        csv_data = df_master.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="🔵 Unduh Rekap CSV (.csv)",
+            data=csv_data,
+            file_name=f"rekap_absen_master_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
