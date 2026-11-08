@@ -37,9 +37,8 @@ def muat_data_absen():
             return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
 
-# Inisialisasi memori tampilan session state agar data sinkron dengan database server
-if "data_log_view" not in st.session_state:
-    st.session_state["data_log_view"] = muat_data_absen()
+# 🔥 FIX UTAMA: Muat data dari berkas CSV server langsung ke memori setiap kali halaman di-refresh / dimuat ulang
+st.session_state["data_log_view"] = muat_data_absen()
 
 def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon, status):
     df_baru = pd.DataFrame([{
@@ -53,6 +52,7 @@ def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon,
         "Status": status
     }])
     df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
+    # Update memori tampilan secara real-time
     st.session_state["data_log_view"] = pd.concat([st.session_state["data_log_view"], df_baru], ignore_index=True)
 
 # Fungsi untuk mengonversi data derajat EXIF GPS iPhone ke format desimal numerik standar
@@ -190,7 +190,7 @@ with col1:
     )
     
 with col2:
-    csv_data = df_master.to_csv(index=False).encode('utf-8')
+    csv_data = df_master.to_csv(index=False).encode('utf-8') if not df_master.empty else b""
     st.download_button(
         label="🔵 Unduh Dokumen CSV (.csv)",
         data=csv_data,
