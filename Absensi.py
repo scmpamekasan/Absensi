@@ -22,15 +22,12 @@ KARYAWAN_DATA = {
 
 FILE_DATABASE = "absen_master.csv"
 
-# PERBAIKAN: Fungsi inisialisasi awal agar file CSV PASTI dibuat di server
-def inisialisasi_database_fisik():
-    if not os.path.exists(FILE_DATABASE):
-        df_kosong = pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
-        df_kosong.to_csv(FILE_DATABASE, index=False)
+# Inisialisasi awal file CSV agar tidak error saat pertama kali dijalankan
+if not os.path.exists(FILE_DATABASE):
+    df_kosong = pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
+    df_kosong.to_csv(FILE_DATABASE, index=False)
 
-# Panggil fungsi inisialisasi di awal aplikasi dijalankan
-inisialisasi_database_fisik()
-
+# Membaca data log riwayat kumulatif
 def muat_data_absen():
     if os.path.exists(FILE_DATABASE):
         try:
@@ -41,6 +38,7 @@ def muat_data_absen():
             return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
 
+# Menulis baris log absen baru secara fisik ke server
 def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon, status):
     df_baru = pd.DataFrame([{
         "Tanggal": tanggal,
@@ -116,14 +114,14 @@ if picture is not None:
     cv_img = Image.open(BytesIO(bytes_data))
     open_cv_image = np.array(cv_img)
     
-    if len(open_cv_image.shape) == 3 and open_cv_image.shape == 4:
+    if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
     elif len(open_cv_image.shape) == 2:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_GRAY2RGB)
         
     open_cv_image = open_cv_image[:, :, ::-1].copy()
     
-    st.image(bytes_data, caption="Pratinjau Unggahan Foto QR", width=200)
+    st.image(bytes_data, caption="Pratinjau Foto QR Anda", width=200)
     
     with st.spinner("Memvalidasi kode matriks QR..."):
         detector = cv2.QRCodeDetector()
@@ -141,9 +139,9 @@ if picture is not None:
                     sudah_absen = ((df_lama['ID'] == emp_id) & (df_lama['Tanggal'] == hari_ini)).any()
                 
                 if not sudah_absen:
+                    # PERBAIKAN: Simpan ke database tanpa memicu st.rerun
                     simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, koordinat_karyawan, current_lat, current_lon, "Hadir Sah")
                     st.success(f"🎉 PRESENSI BERHASIL DICATAT! Selamat bertugas, {KARYAWAN_DATA[emp_id]}.")
-                    st.rerun()  # Paksa refresh agar data baru langsung masuk tabel bawah
                 else:
                     st.warning(f"⚠️ Profil ID {emp_id} sudah terdaftar hadir pada hari ini ({hari_ini}).")
             else:
@@ -152,30 +150,28 @@ if picture is not None:
             st.error("📷 Pembacaan kode gagal. Pastikan foto berjarak dekat, sejajar lurus, dan tidak buram.")
 
 # ----------------------------------------------------
-# 📊 PRESENTASI TABEL DATA LOG ABSENSI (PASTI MUNCUL)
+# 📊 PRESENTASI TABEL DATA LOG ABSENSI
 # ----------------------------------------------------
 st.write("---")
 st.subheader("📊 Master Riwayat & Lokasi Scan Karyawan")
 
-# Ambil data terbaru dari server
+# Membaca data rekap master terbaru untuk ditampilkan di layar
 df_master = muat_data_absen()
 
-# PERBAIKAN: Tabel selalu ditampilkan (bisa kosong atau berisi data)
 st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
 
-# Tampilkan Peta jika ada data koordinat yang valid
+# Tampilkan peta hanya jika kolom Latitude berisi data numerik yang valid
 df_peta = df_master.dropna(subset=['Latitude', 'Longitude'])
 if not df_peta.empty:
     st.write("### 🗺️ Peta Visualisasi Lokasi Scan Karyawan")
     df_map_engine = df_peta[['Latitude', 'Longitude']].rename(columns={'Latitude': 'lat', 'Longitude': 'lon'})
     st.map(df_map_engine, zoom=11)
 
-# MODUL UNDUH DOKUMEN REKAP
+# MODUL UNDUH MASTER BERKAS
 st.write("### 📥 Unduh Master Berkas Log Absensi")
 col1, col2 = st.columns(2)
 
 with col1:
-    # Cegah error excel jika dataframe masih benar-benar kosong
     excel_data = to_excel(df_master) if not df_master.empty else b""
     st.download_button(
         label="🟢 Unduh Dokumen Excel (.xlsx)",
