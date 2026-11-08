@@ -3,4 +3,4 @@ opencv-python-headless
 pillow
 pandas
 openpyxl
-streamlit-js-eval
+piexif
