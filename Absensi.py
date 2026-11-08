@@ -22,6 +22,14 @@ KARYAWAN_DATA = {
 if "attendance_db" not in st.session_state:
     st.session_state.attendance_db = []
 
+# Fungsi pembantu untuk mengonversi DataFrame menjadi file Excel di memori
+def to_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Log Absensi')
+    processed_data = output.getvalue()
+    return processed_data
+
 # ====================================================
 # INTERFACE APLIKASI
 # ====================================================
@@ -83,9 +91,39 @@ if picture is not None:
         else:
             st.error("📷 QR Code tidak terdeteksi. Pastikan Anda memotret kertas QR secara dekat, fokus, lurus, dan tidak blur.")
 
-# 📊 Panel Log Hasil Absensi Hari Ini
+# 📊 Panel Log Hasil Absensi & Fitur Unduh Data
 if st.session_state.attendance_db:
     st.write("---")
     st.subheader("📊 Laporan Absensi Hari Ini")
+    
+    # Konversi list data absensi menjadi DataFrame Pandas
     df = pd.DataFrame(st.session_state.attendance_db)
+    
+    # Tampilkan tabel absensi langsung di antarmuka web
     st.dataframe(df, use_container_width=True)
+    
+    # Membuat tombol unduh berkas (Download Buttons)
+    st.write("### 📥 Unduh Log Data Karyawan")
+    col1, col2 = st.columns(2)
+    
+    # 1. Tombol Download format Excel (.xlsx)
+    with col1:
+        excel_data = to_excel(df)
+        st.download_button(
+            label="🟢 Unduh format Excel (.xlsx)",
+            data=excel_data,
+            file_name=f"log_absensi_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+        
+    # 2. Tombol Download format CSV (.csv)
+    with col2:
+        csv_data = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="🔵 Unduh format CSV (.csv)",
+            data=csv_data,
+            file_name=f"log_absensi_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
