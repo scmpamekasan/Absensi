@@ -22,12 +22,12 @@ KARYAWAN_DATA = {
 
 FILE_DATABASE = "absen_master.csv"
 
-# Inisialisasi awal file CSV agar tidak error saat pertama kali dijalankan
+# 1. Inisialisasi file CSV fisik di server hosting
 if not os.path.exists(FILE_DATABASE):
     df_kosong = pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     df_kosong.to_csv(FILE_DATABASE, index=False)
 
-# Membaca data log riwayat kumulatif
+# Membaca seluruh data log riwayat kumulatif
 def muat_data_absen():
     if os.path.exists(FILE_DATABASE):
         try:
@@ -38,8 +38,13 @@ def muat_data_absen():
             return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
     return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
 
-# Menulis baris log absen baru secara fisik ke server
+# 2. Inisialisasi data memori session state agar sinkron dengan file CSV
+if "data_log_view" not in st.session_state:
+    st.session_state["data_log_view"] = muat_data_absen()
+
+# Menulis baris log absen baru secara fisik ke server dan memori tampilan
 def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon, status):
+    # Simpan ke CSV fisik
     df_baru = pd.DataFrame([{
         "Tanggal": tanggal,
         "ID": emp_id,
@@ -51,6 +56,9 @@ def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon,
         "Status": status
     }])
     df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
+    
+    # PERBAIKAN: Masukkan langsung ke memori tampilan agar langsung muncul di tabel tanpa jeda/looping
+    st.session_state["data_log_view"] = pd.concat([st.session_state["data_log_view"], df_baru], ignore_index=True)
 
 def to_excel(df):
     output = BytesIO()
@@ -133,13 +141,12 @@ if picture is not None:
                 hari_ini = waktu_sekarang.strftime("%Y-%m-%d")
                 waktu_str = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
                 
-                df_lama = muat_data_absen()
+                df_lama = st.session_state["data_log_view"]
                 sudah_absen = False
                 if not df_lama.empty:
                     sudah_absen = ((df_lama['ID'] == emp_id) & (df_lama['Tanggal'] == hari_ini)).any()
                 
                 if not sudah_absen:
-                    # PERBAIKAN: Simpan ke database tanpa memicu st.rerun
                     simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, koordinat_karyawan, current_lat, current_lon, "Hadir Sah")
                     st.success(f"🎉 PRESENSI BERHASIL DICATAT! Selamat bertugas, {KARYAWAN_DATA[emp_id]}.")
                 else:
@@ -149,18 +156,19 @@ if picture is not None:
         else:
             st.error("📷 Pembacaan kode gagal. Pastikan foto berjarak dekat, sejajar lurus, dan tidak buram.")
 
-# ----------------------------------------------------
-# 📊 PRESENTASI TABEL DATA LOG ABSENSI
-# ----------------------------------------------------
+# ====================================================
+# 📊 PRESENTASI TABEL DATA LOG ABSENSI LIVE MURNI
+# ====================================================
 st.write("---")
 st.subheader("📊 Master Riwayat & Lokasi Scan Karyawan")
 
-# Membaca data rekap master terbaru untuk ditampilkan di layar
-df_master = muat_data_absen()
+# Menampilkan data langsung dari variabel state penampung utama yang bersifat real-time
+df_master = st.session_state["data_log_view"]
 
+# Tampilkan tabel log data terupdate
 st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
 
-# Tampilkan peta hanya jika kolom Latitude berisi data numerik yang valid
+# Tampilkan komponen visual spasial jika ada koordinat terdaftar
 df_peta = df_master.dropna(subset=['Latitude', 'Longitude'])
 if not df_peta.empty:
     st.write("### 🗺️ Peta Visualisasi Lokasi Scan Karyawan")
