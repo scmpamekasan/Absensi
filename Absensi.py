@@ -20,23 +20,27 @@ KARYAWAN_DATA = {
     "EMP004": "Eustacia Redinka Amayra"
 }
 
-# Berkas penyimpanan database lokal fisik di server cloud
 FILE_DATABASE = "absen_master.csv"
 
-# Fungsi membaca data terakumulasi dari file CSV server
+# PERBAIKAN: Fungsi inisialisasi awal agar file CSV PASTI dibuat di server
+def inisialisasi_database_fisik():
+    if not os.path.exists(FILE_DATABASE):
+        df_kosong = pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
+        df_kosong.to_csv(FILE_DATABASE, index=False)
+
+# Panggil fungsi inisialisasi di awal aplikasi dijalankan
+inisialisasi_database_fisik()
+
 def muat_data_absen():
     if os.path.exists(FILE_DATABASE):
         try:
             df = pd.read_csv(FILE_DATABASE)
-            # Pastikan kolom Koordinat GPS bertipe string agar tidak terjadi error parsing
             df['Koordinat GPS'] = df['Koordinat GPS'].astype(str)
             return df
         except:
             return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
-    else:
-        return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
+    return pd.DataFrame(columns=["Tanggal", "ID", "Nama", "Waktu Presensi", "Koordinat GPS", "Latitude", "Longitude", "Status"])
 
-# Fungsi menulis baris log baru ke file CSV server secara permanen
 def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon, status):
     df_baru = pd.DataFrame([{
         "Tanggal": tanggal,
@@ -48,12 +52,8 @@ def simpan_absen_baru(tanggal, emp_id, nama, waktu_str, koordinat_str, lat, lon,
         "Longitude": lon,
         "Status": status
     }])
-    if not os.path.exists(FILE_DATABASE):
-        df_baru.to_csv(FILE_DATABASE, index=False)
-    else:
-        df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
+    df_baru.to_csv(FILE_DATABASE, mode='a', header=False, index=False)
 
-# Konversi DataFrame ke format Excel buffer
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -66,20 +66,17 @@ def to_excel(df):
 # ====================================================
 st.set_page_config(page_title="Absensi QR Permanent Log", layout="centered")
 st.title("🔒 Sistem Absensi QR Code & Koordinat Permanen")
-st.caption("Data log presensi tersimpan permanen di server fisik bersama rekaman titik koordinat GPS HP karyawan.")
+st.caption("Data log presensi tersimpan di server fisik bersama rekaman titik koordinat GPS HP karyawan.")
 
-# Dropdown Pemilihan Identitas Karyawan
+# Dropdown Karyawan
 emp_id = st.selectbox("Pilih Profil ID Karyawan", list(KARYAWAN_DATA.keys()), format_func=lambda x: f"{x} - {KARYAWAN_DATA[x]}")
 
 st.write("---")
 st.subheader("📍 Langkah 1: Kunci Lokasi Koordinat Anda")
-st.caption("Wajib ketuk tombol di bawah ini sebelum mengunggah foto QR Code agar koordinat presensi Anda terekam valid.")
 
-# Tombol pemicu interaksi sensor lokasi seluler browser
 if st.button("🛰️ Ambil / Sinkronisasikan Koordinat GPS HP", use_container_width=True):
     st.session_state["pemicu_gps_sinkron"] = True
 
-# Skrip injeksi API Geolocation HTML5 High Accuracy
 js_gps_script = """
 window.navigator.geolocation.getCurrentPosition(
     function(pos) { 
@@ -107,7 +104,7 @@ if loc_string:
     else:
         st.error("❌ Akses lokasi ditolak browser. Sila aktifkan Location Services di pengaturan browser Anda.")
 else:
-    st.warning("⚠️ Menunggu data sinyal GPS. Sila ketuk tombol hitam **'🛰️ Ambil / Sinkronisasikan Koordinat GPS HP'** di atas.")
+    st.warning("⚠️ Menunggu data sinyal GPS. Sila ketuk tombol **'🛰️ Ambil / Sinkronisasikan Koordinat GPS HP'** di atas.")
 
 st.write("---")
 st.subheader("📸 Langkah 2: Unggah Jepretan QR Code Kantor")
@@ -119,7 +116,7 @@ if picture is not None:
     cv_img = Image.open(BytesIO(bytes_data))
     open_cv_image = np.array(cv_img)
     
-    if len(open_cv_image.shape) == 3 and open_cv_image.shape[2] == 4:
+    if len(open_cv_image.shape) == 3 and open_cv_image.shape == 4:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_RGBA2RGB)
     elif len(open_cv_image.shape) == 2:
         open_cv_image = cv2.cvtColor(open_cv_image, cv2.COLOR_GRAY2RGB)
@@ -144,9 +141,9 @@ if picture is not None:
                     sudah_absen = ((df_lama['ID'] == emp_id) & (df_lama['Tanggal'] == hari_ini)).any()
                 
                 if not sudah_absen:
-                    # Tulis log baru ke file CSV server secara permanen termasuk lintang dan bujur
                     simpan_absen_baru(hari_ini, emp_id, KARYAWAN_DATA[emp_id], waktu_str, koordinat_karyawan, current_lat, current_lon, "Hadir Sah")
                     st.success(f"🎉 PRESENSI BERHASIL DICATAT! Selamat bertugas, {KARYAWAN_DATA[emp_id]}.")
+                    st.rerun()  # Paksa refresh agar data baru langsung masuk tabel bawah
                 else:
                     st.warning(f"⚠️ Profil ID {emp_id} sudah terdaftar hadir pada hari ini ({hari_ini}).")
             else:
@@ -155,49 +152,47 @@ if picture is not None:
             st.error("📷 Pembacaan kode gagal. Pastikan foto berjarak dekat, sejajar lurus, dan tidak buram.")
 
 # ----------------------------------------------------
-# 📊 PRESENTASI TABEL DATA LOG ABSENSI PERMANEN
+# 📊 PRESENTASI TABEL DATA LOG ABSENSI (PASTI MUNCUL)
 # ----------------------------------------------------
+st.write("---")
+st.subheader("📊 Master Riwayat & Lokasi Scan Karyawan")
+
+# Ambil data terbaru dari server
 df_master = muat_data_absen()
 
-# Bagian ini dijamin akan selalu muncul di layar selama file database absen_master.csv ada di server
-if not df_master.empty:
-    st.write("---")
-    st.subheader("📊 Master Ringkasan Riwayat Log Absensi")
-    st.caption("Data di bawah mencakup riwayat kumulatif harian yang tersimpan secara permanen di basis data server.")
+# PERBAIKAN: Tabel selalu ditampilkan (bisa kosong atau berisi data)
+st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
+
+# Tampilkan Peta jika ada data koordinat yang valid
+df_peta = df_master.dropna(subset=['Latitude', 'Longitude'])
+if not df_peta.empty:
+    st.write("### 🗺️ Peta Visualisasi Lokasi Scan Karyawan")
+    df_map_engine = df_peta[['Latitude', 'Longitude']].rename(columns={'Latitude': 'lat', 'Longitude': 'lon'})
+    st.map(df_map_engine, zoom=11)
+
+# MODUL UNDUH DOKUMEN REKAP
+st.write("### 📥 Unduh Master Berkas Log Absensi")
+col1, col2 = st.columns(2)
+
+with col1:
+    # Cegah error excel jika dataframe masih benar-benar kosong
+    excel_data = to_excel(df_master) if not df_master.empty else b""
+    st.download_button(
+        label="🟢 Unduh Dokumen Excel (.xlsx)",
+        data=excel_data,
+        file_name=f"master_absen_koordinat_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        disabled=df_master.empty,
+        use_container_width=True
+    )
     
-    # Menampilkan tabel rekap permanen multi-hari diurutkan dari waktu terbaru
-    st.dataframe(df_master.sort_values(by="Waktu Presensi", ascending=False), use_container_width=True)
-    
-    # FILTER DATA VALID UNTUK KEBUTUHAN PEMETAAN GEOGRAFIS
-    # Menghapus baris kosong/tanpa GPS agar widget peta tidak memicu error visual
-    df_peta = df_master.dropna(subset=['Latitude', 'Longitude'])
-    
-    if not df_peta.empty:
-        st.write("### 🗺️ Peta Visualisasi Lokasi Scan Karyawan")
-        # Rename kolom ke format baku Streamlit map engine
-        df_map_engine = df_peta[['Latitude', 'Longitude']].rename(columns={'Latitude': 'lat', 'Longitude': 'lon'})
-        st.map(df_map_engine, zoom=11)
-    
-    # MODUL UNDUH DOKUMEN REKAP GABUNGAN OPERASIONAL KANTOR
-    st.write("### 📥 Unduh Master Berkas Log Absensi")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        excel_data = to_excel(df_master)
-        st.download_button(
-            label="🟢 Unduh Dokumen Excel (.xlsx)",
-            data=excel_data,
-            file_name=f"master_absen_koordinat_{datetime.now().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-        
-    with col2:
-        csv_data = df_master.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="🔵 Unduh Dokumen CSV (.csv)",
-            data=csv_data,
-            file_name=f"master_absen_koordinat_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+with col2:
+    csv_data = df_master.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="🔵 Unduh Dokumen CSV (.csv)",
+        data=csv_data,
+        file_name=f"master_absen_koordinat_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        disabled=df_master.empty,
+        use_container_width=True
+    )
